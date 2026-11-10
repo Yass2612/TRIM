@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
 
 if TYPE_CHECKING:
+    from Efecto_Neon import SilhouetteNeonEffect
     from visual_effects import SilhouetteTrailEffect
 
 
@@ -44,6 +45,7 @@ class VideoInterface:
         self.recording_status = tk.StringVar(value="Grabación detenida")
         self.performance_text = tk.StringVar(value="Buffer: --/30")
         self.trail_effect: SilhouetteTrailEffect | None = None
+        self.neon_effect: SilhouetteNeonEffect | None = None
         self._fps_frames = 0
         self._fps_started = 0.0
         self._display_fps = 0.0
@@ -178,7 +180,7 @@ class VideoInterface:
         self.camera_selector.pack(fill="x", pady=(0, 12))
         self.camera_selector.bind("<<ComboboxSelected>>", self._change_camera)
 
-        for effect in ("Original", "Estela"):
+        for effect in ("Original", "Estela", "Neón"):
             tk.Radiobutton(
                 controls,
                 text=effect,
@@ -366,9 +368,9 @@ class VideoInterface:
 
     def _select_effect(self):
         effect = self.selected_effect.get()
-        if effect == "Estela":
+        if effect in ("Estela", "Neón"):
             try:
-                self._get_trail_effect()
+                self._get_selected_effect()
             except ImportError as error:
                 self._report_effect_error(
                     "No se pudo importar MediaPipe. Instálalo en el entorno de "
@@ -385,13 +387,17 @@ class VideoInterface:
 
         if self.trail_effect is not None:
             self.trail_effect.reset()
+        if self.neon_effect is not None:
+            self.neon_effect.reset()
         self.intensity_scale.configure(
             state="disabled" if effect == "Original" else "normal"
         )
         if effect == "Original":
             self.effect_note.configure(text="Modo original · señal sin filtros")
-        else:
+        elif effect == "Estela":
             self.effect_note.configure(text="Silueta con estela · intensidad ajustable")
+        else:
+            self.effect_note.configure(text="Contorno neón · intensidad ajustable")
 
     def _get_trail_effect(self) -> SilhouetteTrailEffect:
         if self.trail_effect is None:
@@ -400,13 +406,25 @@ class VideoInterface:
             self.trail_effect = SilhouetteTrailEffect()
         return self.trail_effect
 
+    def _get_neon_effect(self) -> SilhouetteNeonEffect:
+        if self.neon_effect is None:
+            from Efecto_Neon import SilhouetteNeonEffect
+
+            self.neon_effect = SilhouetteNeonEffect()
+        return self.neon_effect
+
+    def _get_selected_effect(self):
+        if self.selected_effect.get() == "Estela":
+            return self._get_trail_effect()
+        return self._get_neon_effect()
+
     def _report_effect_error(self, detail):
         self.selected_effect.set("Original")
         self.intensity_scale.configure(state="disabled")
-        self.effect_note.configure(text="Estela no disponible")
+        self.effect_note.configure(text="Efecto no disponible")
         messagebox.showerror(
-            "No se pudo cargar el efecto Estela",
-            f"No se ha podido iniciar la segmentación de silueta.\n\n{detail}",
+            "No se pudo cargar el efecto",
+            f"No se ha podido iniciar el efecto seleccionado.\n\n{detail}",
         )
 
     def _update_intensity_label(self, value):
@@ -418,8 +436,8 @@ class VideoInterface:
         if effect == "Original" or intensity == 0:
             return frame
 
-        if effect == "Estela":
-            overlay = self._get_trail_effect().apply(frame)
+        if effect in ("Estela", "Neón"):
+            overlay = self._get_selected_effect().apply(frame)
             alpha = (overlay[:, :, 3].astype("float32") / 255.0) * intensity
             alpha = alpha[:, :, None]
             return (
