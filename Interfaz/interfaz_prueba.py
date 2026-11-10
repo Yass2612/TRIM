@@ -8,8 +8,8 @@ from tkinter import filedialog, messagebox, ttk
 import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Motor_Y_Captura.Efecto_Silueta_Estela import SilhouetteTrailEffect
 from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
+from visual_effects import SilhouetteTrailEffect
 
 
 class VideoInterface:
