@@ -1,12 +1,14 @@
 import base64
 import sys
+import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
 import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from Motor_Y_Captura.Efecto_Silueta_Estela import SilhouetteTrailEffect
 from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
 
 
@@ -19,17 +21,27 @@ class VideoInterface:
     def __init__(self, root):
         self.root = root
         self.root.title("Procesamiento de vídeo | Interfaz de prueba")
-        self.root.geometry("1100x720")
-        self.root.minsize(900, 620)
+        self.root.geometry("1180x780")
+        self.root.minsize(1000, 700)
         self.root.configure(bg=self.BACKGROUND)
 
         self.engine = None
         self.preview_image = None
+        self.current_frame = None
+        self.video_writer = None
+        self._last_frame_id = None
         self.selected_effect = tk.StringVar(value="Original")
+        self.selected_camera = tk.StringVar(value="0")
+        self.mirror_enabled = tk.BooleanVar(value=False)
         self.camera_status = tk.StringVar(value="Conectando con la cámara...")
-        self.fps_text = tk.StringVar(value="-- FPS")
+        self.fps_text = tk.StringVar(value="-- FPS · -- × --")
+        self.intensity_text = tk.StringVar(value="50 %")
+        self.recording_status = tk.StringVar(value="Grabación detenida")
+        self.performance_text = tk.StringVar(value="Buffer: --/30")
+        self.trail_effect = SilhouetteTrailEffect()
         self._fps_frames = 0
         self._fps_started = 0.0
+        self._display_fps = 0.0
 
         self._configure_style()
         self._build_layout()
@@ -145,7 +157,23 @@ class VideoInterface:
             font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(4, 14))
 
-        for effect in ("Original", "Estela", "Neón", "Térmico"):
+        tk.Label(
+            controls,
+            text="CÁMARA",
+            bg=self.PANEL,
+            fg="#f4f5fa",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", pady=(0, 5))
+        self.camera_selector = ttk.Combobox(
+            controls,
+            textvariable=self.selected_camera,
+            values=tuple(str(index) for index in range(6)),
+            state="readonly",
+        )
+        self.camera_selector.pack(fill="x", pady=(0, 12))
+        self.camera_selector.bind("<<ComboboxSelected>>", self._change_camera)
+
+        for effect in ("Original", "Estela"):
             tk.Radiobutton(
                 controls,
                 text=effect,
@@ -174,23 +202,35 @@ class VideoInterface:
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(22, 5))
         self.intensity = tk.DoubleVar(value=50)
-        ttk.Scale(
+        self.intensity_scale = ttk.Scale(
             controls,
             from_=0,
             to=100,
             variable=self.intensity,
             style="Test.Horizontal.TScale",
-            state="disabled",
-        ).pack(fill="x")
+            command=self._update_intensity_label,
+        )
+        self.intensity_scale.pack(fill="x")
+        self.intensity_scale.configure(state="disabled")
         tk.Label(
             controls,
-            text="Se conectará al integrar los filtros.",
+            textvariable=self.intensity_text,
             bg=self.PANEL,
-            fg=self.MUTED,
-            font=("Segoe UI", 8),
-            wraplength=235,
-            justify="left",
-        ).pack(anchor="w", pady=(5, 0))
+            fg="#bcb4ff",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="e", pady=(3, 0))
+
+        tk.Checkbutton(
+            controls,
+            text="Espejo horizontal",
+            variable=self.mirror_enabled,
+            bg=self.PANEL,
+            fg="#e5e8f0",
+            activebackground=self.PANEL,
+            activeforeground="white",
+            selectcolor="#303747",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(12, 0))
 
         self.effect_note = tk.Label(
             controls,
@@ -201,7 +241,57 @@ class VideoInterface:
             wraplength=235,
             justify="left",
         )
-        self.effect_note.pack(anchor="w", pady=(20, 12))
+        self.effect_note.pack(anchor="w", pady=(12, 8))
+
+        tk.Label(
+            controls,
+            textvariable=self.performance_text,
+            bg=self.PANEL,
+            fg=self.MUTED,
+            font=("Segoe UI", 8),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        tk.Label(
+            controls,
+            textvariable=self.recording_status,
+            bg=self.PANEL,
+            fg="#ee6b72",
+            font=("Segoe UI", 8, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 7))
+
+        self.capture_button = tk.Button(
+            controls,
+            text="Guardar foto",
+            command=self._save_snapshot,
+            bg="#303747",
+            fg="white",
+            activebackground="#414b60",
+            activeforeground="white",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=8,
+            cursor="hand2",
+        )
+        self.capture_button.pack(fill="x", side="bottom", pady=(6, 0))
+
+        self.record_button = tk.Button(
+            controls,
+            text="Iniciar grabación",
+            command=self._toggle_recording,
+            bg="#bd4651",
+            fg="white",
+            activebackground="#a53b45",
+            activeforeground="white",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=8,
+            cursor="hand2",
+        )
+        self.record_button.pack(fill="x", side="bottom", pady=(0, 6))
 
         self.camera_button = tk.Button(
             controls,
@@ -222,7 +312,10 @@ class VideoInterface:
     def _start_camera(self):
         try:
             self.engine = VideoEngineThreaded(
-                src=0, width=640, height=480, buffer_size=30
+                src=int(self.selected_camera.get()),
+                width=640,
+                height=480,
+                buffer_size=30,
             ).start()
         except (ValueError, cv2.error) as error:
             self.engine = None
@@ -234,18 +327,24 @@ class VideoInterface:
         self.camera_status.set("Cámara conectada · captura en tiempo real")
         self.status_dot.configure(fg="#61d095")
         self.camera_button.configure(text="Detener cámara")
+        self._last_frame_id = None
+        self.current_frame = None
+        self.trail_effect.reset()
         self._fps_frames = 0
         self._fps_started = 0.0
 
     def _stop_camera(self):
+        self._stop_recording()
         if self.engine is not None:
             self.engine.stop()
             self.engine = None
         self.preview.configure(image="", text="Cámara detenida")
         self.preview_image = None
+        self.current_frame = None
         self.camera_status.set("Cámara detenida")
         self.status_dot.configure(fg="#929bad")
-        self.fps_text.set("-- FPS")
+        self.fps_text.set("-- FPS · -- × --")
+        self.performance_text.set("Buffer: --/30")
         self.camera_button.configure(text="Iniciar cámara")
 
     def _toggle_camera(self):
@@ -254,40 +353,165 @@ class VideoInterface:
         else:
             self._stop_camera()
 
+    def _change_camera(self, _event=None):
+        if self.engine is not None:
+            self._stop_camera()
+            self._start_camera()
+
     def _select_effect(self):
         effect = self.selected_effect.get()
+        self.trail_effect.reset()
+        self.intensity_scale.configure(
+            state="disabled" if effect == "Original" else "normal"
+        )
         if effect == "Original":
             self.effect_note.configure(text="Modo original · señal sin filtros")
         else:
-            self.effect_note.configure(
-                text=f"{effect} seleccionado · se implementará en la fase 3"
+            self.effect_note.configure(text="Silueta con estela · intensidad ajustable")
+
+    def _update_intensity_label(self, value):
+        self.intensity_text.set(f"{float(value):.0f} %")
+
+    def _apply_effect(self, frame):
+        effect = self.selected_effect.get()
+        intensity = self.intensity.get() / 100.0
+        if effect == "Original" or intensity == 0:
+            return frame
+
+        if effect == "Estela":
+            overlay = self.trail_effect.apply(frame)
+            alpha = (overlay[:, :, 3].astype("float32") / 255.0) * intensity
+            alpha = alpha[:, :, None]
+            return (
+                frame.astype("float32") * (1.0 - alpha)
+                + overlay[:, :, :3].astype("float32") * alpha
+            ).clip(0, 255).astype("uint8")
+        return frame
+
+    def _save_snapshot(self):
+        if self.current_frame is None:
+            messagebox.showwarning("Sin imagen", "Espera a que llegue un fotograma.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Guardar captura",
+            defaultextension=".jpg",
+            filetypes=(("Imagen JPEG", "*.jpg"), ("Imagen PNG", "*.png")),
+        )
+        if not path:
+            return
+        try:
+            saved = cv2.imwrite(path, self.current_frame)
+        except (cv2.error, OSError) as error:
+            messagebox.showerror("Error al guardar", f"No se pudo guardar la imagen: {error}")
+            return
+        if not saved:
+            messagebox.showerror("Error al guardar", "No se pudo guardar la imagen.")
+            return
+        self.camera_status.set(f"Captura guardada: {Path(path).name}")
+
+    def _toggle_recording(self):
+        if self.video_writer is not None:
+            self._stop_recording()
+            return
+        if self.current_frame is None:
+            messagebox.showwarning("Sin vídeo", "Espera a que llegue un fotograma.")
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="Guardar grabación",
+            defaultextension=".mp4",
+            filetypes=(("Vídeo MP4", "*.mp4"),),
+        )
+        if not path:
+            return
+
+        height, width = self.current_frame.shape[:2]
+        try:
+            writer = cv2.VideoWriter(
+                path,
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                30.0,
+                (width, height),
             )
+        except (cv2.error, OSError) as error:
+            messagebox.showerror("Error al grabar", f"No se pudo crear el vídeo: {error}")
+            return
+        if not writer.isOpened():
+            writer.release()
+            messagebox.showerror(
+                "Error al grabar",
+                "No se pudo crear el vídeo. Prueba otra ubicación o formato.",
+            )
+            return
+
+        self.video_writer = writer
+        self._recording_path = path
+        self.recording_status.set("● Grabando")
+        self.record_button.configure(text="Detener grabación", bg="#7f3039")
+
+    def _stop_recording(self):
+        if self.video_writer is None:
+            return
+        self.video_writer.release()
+        self.video_writer = None
+        self.recording_status.set(
+            f"Grabación guardada: {Path(self._recording_path).name}"
+        )
+        self.record_button.configure(text="Iniciar grabación", bg="#bd4651")
 
     def _update_preview(self):
         if self.engine is not None:
-            frame = self.engine.get_latest_frame()
-            if frame is not None:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                height, width = rgb_frame.shape[:2]
-                ppm = f"P6 {width} {height} 255 ".encode("ascii") + rgb_frame.tobytes()
-                self.preview_image = tk.PhotoImage(
-                    data=base64.b64encode(ppm), format="PPM"
-                )
-                self.preview.configure(image=self.preview_image, text="")
+            frame_id, frame = self.engine.get_latest_frame_with_id()
+            if frame is not None and frame_id != self._last_frame_id:
+                processed = self._apply_effect(frame)
+                if self.mirror_enabled.get():
+                    processed = cv2.flip(processed, 1)
+                self.current_frame = processed
+                self._last_frame_id = frame_id
+
+                if self.video_writer is not None:
+                    try:
+                        self.video_writer.write(processed)
+                    except cv2.error as error:
+                        self._stop_recording()
+                        messagebox.showerror(
+                            "Error al grabar",
+                            f"Se detuvo la grabación: {error}",
+                        )
 
                 self._fps_frames += 1
-                now = cv2.getTickCount() / cv2.getTickFrequency()
+                now = time.perf_counter()
                 if self._fps_started == 0.0:
                     self._fps_started = now
                 elif now - self._fps_started >= 1.0:
-                    fps = self._fps_frames / (now - self._fps_started)
-                    self.fps_text.set(f"{fps:.0f} FPS")
+                    self._display_fps = self._fps_frames / (now - self._fps_started)
                     self._fps_frames = 0
                     self._fps_started = now
+
+                self.performance_text.set(
+                    f"Buffer: {len(self.engine.get_buffer_as_array())}/30"
+                )
+                height, width = processed.shape[:2]
+                self.fps_text.set(
+                    f"{self._display_fps:.0f} FPS · {width} × {height}"
+                )
+
+                encoded, png_frame = cv2.imencode(".png", processed)
+                if not encoded:
+                    self.camera_status.set("No se pudo convertir el fotograma para mostrarlo")
+                    self.status_dot.configure(fg="#ee6b72")
+                    self.root.after(20, self._update_preview)
+                    return
+                self.preview_image = tk.PhotoImage(
+                    data=base64.b64encode(png_frame).decode("ascii"),
+                    format="png",
+                )
+                self.preview.configure(image=self.preview_image, text="")
 
         self.root.after(20, self._update_preview)
 
     def _close(self):
+        self._stop_recording()
         if self.engine is not None:
             self.engine.stop()
             self.engine = None

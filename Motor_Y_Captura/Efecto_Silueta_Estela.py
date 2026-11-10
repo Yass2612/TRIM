@@ -3,7 +3,10 @@ from collections import deque
 import cv2
 import numpy as np
 
-from Motor_y_Captura_v2 import VideoEngineThreaded
+if __package__:
+    from .Motor_y_Captura_v2 import VideoEngineThreaded
+else:
+    from Motor_y_Captura_v2 import VideoEngineThreaded
 
 
 class SilhouetteTrailEffect:
