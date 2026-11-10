@@ -1,51 +1,37 @@
 from collections import deque
-
 import cv2
 import numpy as np
 
-if __package__:
-    from .Motor_y_Captura_v2 import VideoEngineThreaded
-else:
-    from Motor_y_Captura_v2 import VideoEngineThreaded
-
+from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
+from silhouette_tracker import SilhouetteTracker
 
 class SilhouetteTrailEffect:
     def __init__(self, trail_length=12, decay=0.78):
+        """
+        Aplica el efecto de estela de color basado en las máscaras extraídas por el tracker.
+        """
         self.trail_length = trail_length
         self.decay = decay
         self.masks = deque(maxlen=trail_length)
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        self.background = self._create_background_model()
-        self.has_background_frame = False
-
-    @staticmethod
-    def _create_background_model():
-        return cv2.createBackgroundSubtractorMOG2(
-            history=300,
-            varThreshold=32,
-            detectShadows=False,
-        )
+        
+        # Instanciamos el tracker de silueta
+        self.tracker = SilhouetteTracker()
 
     def reset(self):
-        self.background = self._create_background_model()
+        """Reinicia el tracker y limpia el historial de estelas."""
+        self.tracker.reset()
         self.masks.clear()
-        self.has_background_frame = False
 
     def apply(self, frame):
-        foreground = self.background.apply(frame)
-        if not self.has_background_frame:
-            self.has_background_frame = True
-            foreground = np.zeros_like(foreground)
-
-        foreground = cv2.morphologyEx(
-            foreground, cv2.MORPH_OPEN, self.kernel
-        )
-        foreground = cv2.morphologyEx(
-            foreground, cv2.MORPH_CLOSE, self.kernel
-        )
-        foreground = cv2.GaussianBlur(foreground, (5, 5), 0)
+        """
+        Aplica el efecto estela recibiendo el frame completo.
+        :return: Imagen procesada RGBA con color y canal alfa.
+        """
+        # 1. Obtenemos la máscara de la silueta actual desde el tracker
+        foreground = self.tracker.process_frame(frame)
         self.masks.append(foreground)
 
+        # 2. Acumulación y decaimiento del rastro (estela)
         trail_alpha = np.zeros(foreground.shape, dtype=np.float32)
         for age, mask in enumerate(reversed(self.masks)):
             weighted_mask = mask.astype(np.float32) * (
@@ -53,8 +39,10 @@ class SilhouetteTrailEffect:
             )
             np.maximum(trail_alpha, weighted_mask, out=trail_alpha)
 
+        # 3. Composición de color de la estela y la silueta en vivo
         current_alpha = foreground.astype(np.float32) / 255.0
-        trail_color = np.array((255, 170, 35), dtype=np.float32)
+        trail_color = np.array((255, 170, 35), dtype=np.float32)  # Color anaranjado/dorado
+        
         color = trail_alpha[..., None] * trail_color
         color = color * (1.0 - current_alpha[..., None]) + (
             255.0 * current_alpha[..., None]
