@@ -1,45 +1,54 @@
+import os
 import cv2
 import numpy as np
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 
 class SilhouetteTracker:
-    def __init__(self, history=300, var_threshold=45):  # Subimos varThreshold (antes 32) para filtrar más ruido de fondo
-        self.history = history
-        self.var_threshold = var_threshold
+    def __init__(self, model_path="selfie_segmenter.tflite", confidence=0.5):
+        """
+        Segmentación semántica de silueta humana basada en MediaPipe Tasks (v1.x+).
+        Detecta la silueta estática o en movimiento sin foto previa de fondo.
+        """
+        self.confidence = confidence
         
-        # 1. Aumentamos el tamaño del kernel morfológico de (5,5) a (7,7) para eliminar puntos gruesos de ruido
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        self.background = self._create_background_model()
-        self.has_background_frame = False
+        # Comprobar si el archivo del modelo existe
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"No se encontró el archivo del modelo en '{model_path}'. "
+                "Descárgalo usando el comando curl facilitado."
+            )
 
-    def _create_background_model(self):
-        return cv2.createBackgroundSubtractorMOG2(
-            history=self.history,
-            varThreshold=self.var_threshold,
-            detectShadows=False,
+        # Configuración del detector con la API moderna de MediaPipe
+        base_options = python.BaseOptions(model_asset_path=model_path)
+        options = vision.ImageSegmenterOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.IMAGE,
+            output_category_mask=True
         )
+        self.segmenter = vision.ImageSegmenter.create_from_options(options)
 
     def reset(self):
-        self.background = self._create_background_model()
-        self.has_background_frame = False
+        """No requiere reinicio de modelo."""
+        pass
 
     def process_frame(self, frame):
-        foreground = self.background.apply(frame)
+        # 1. Convertir BGR a RGB
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # 2. Convertir imagen de OpenCV a formato MediaPipe Image
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        if not self.has_background_frame:
-            self.has_background_frame = True
-            foreground = np.zeros_like(foreground)
+        # 3. Realizar la inferencia con la red neuronal
+        segmentation_result = self.segmenter.segment(mp_image)
+        category_mask = segmentation_result.category_mask.numpy_view()
 
-        # 2. Umbralizado rígido (Binarización): Elimina sombras débiles o parpadeos de luz
-        _, foreground = cv2.threshold(foreground, 200, 255, cv2.THRESH_BINARY)
+        # 4. En el modelo selfie_segmenter, la categoría 1 (o valor distinto de 0) es la persona
+        solid_mask = np.where(category_mask > 0, 255, 0).astype(np.uint8)
 
-        # 3. Operaciones morfológicas: 
-        # MORPH_OPEN elimina píxeles sueltos en el fondo
-        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, self.kernel, iterations=2)
-        # MORPH_CLOSE rellena los huecos vacíos dentro de tu propia silueta
-        foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, self.kernel, iterations=2)
+        # 5. Suavizado de bordes para la estela de color en visual_effects.py
+        output = cv2.GaussianBlur(solid_mask, (5, 5), 0)
 
-        # 4. Suavizado Gaussian más potente de (5,5) a (9,9) para recortar los bordes limpios
-        foreground = cv2.GaussianBlur(foreground, (9, 9), 0)
-
-        return foreground
+        return output
