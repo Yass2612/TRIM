@@ -1,15 +1,20 @@
+from __future__ import annotations
+
 import base64
 import sys
 import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from typing import TYPE_CHECKING
 
 import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
-from visual_effects import SilhouetteTrailEffect
+
+if TYPE_CHECKING:
+    from visual_effects import SilhouetteTrailEffect
 
 
 class VideoInterface:
@@ -38,7 +43,7 @@ class VideoInterface:
         self.intensity_text = tk.StringVar(value="50 %")
         self.recording_status = tk.StringVar(value="Grabación detenida")
         self.performance_text = tk.StringVar(value="Buffer: --/30")
-        self.trail_effect = SilhouetteTrailEffect()
+        self.trail_effect: SilhouetteTrailEffect | None = None
         self._fps_frames = 0
         self._fps_started = 0.0
         self._display_fps = 0.0
@@ -329,7 +334,8 @@ class VideoInterface:
         self.camera_button.configure(text="Detener cámara")
         self._last_frame_id = None
         self.current_frame = None
-        self.trail_effect.reset()
+        if self.trail_effect is not None:
+            self.trail_effect.reset()
         self._fps_frames = 0
         self._fps_started = 0.0
 
@@ -356,11 +362,29 @@ class VideoInterface:
     def _change_camera(self, _event=None):
         if self.engine is not None:
             self._stop_camera()
-            self._start_camera()
+        self._start_camera()
 
     def _select_effect(self):
         effect = self.selected_effect.get()
-        self.trail_effect.reset()
+        if effect == "Estela":
+            try:
+                self._get_trail_effect()
+            except ImportError as error:
+                self._report_effect_error(
+                    "No se pudo importar MediaPipe. Instálalo en el entorno de "
+                    f"Python de la interfaz con:\n\"{sys.executable}\" -m pip "
+                    f"install mediapipe\n\nDetalle: {error}"
+                )
+                return
+            except FileNotFoundError as error:
+                self._report_effect_error(str(error))
+                return
+            except (RuntimeError, ValueError) as error:
+                self._report_effect_error(str(error))
+                return
+
+        if self.trail_effect is not None:
+            self.trail_effect.reset()
         self.intensity_scale.configure(
             state="disabled" if effect == "Original" else "normal"
         )
@@ -368,6 +392,22 @@ class VideoInterface:
             self.effect_note.configure(text="Modo original · señal sin filtros")
         else:
             self.effect_note.configure(text="Silueta con estela · intensidad ajustable")
+
+    def _get_trail_effect(self) -> SilhouetteTrailEffect:
+        if self.trail_effect is None:
+            from visual_effects import SilhouetteTrailEffect
+
+            self.trail_effect = SilhouetteTrailEffect()
+        return self.trail_effect
+
+    def _report_effect_error(self, detail):
+        self.selected_effect.set("Original")
+        self.intensity_scale.configure(state="disabled")
+        self.effect_note.configure(text="Estela no disponible")
+        messagebox.showerror(
+            "No se pudo cargar el efecto Estela",
+            f"No se ha podido iniciar la segmentación de silueta.\n\n{detail}",
+        )
 
     def _update_intensity_label(self, value):
         self.intensity_text.set(f"{float(value):.0f} %")
@@ -379,7 +419,7 @@ class VideoInterface:
             return frame
 
         if effect == "Estela":
-            overlay = self.trail_effect.apply(frame)
+            overlay = self._get_trail_effect().apply(frame)
             alpha = (overlay[:, :, 3].astype("float32") / 255.0) * intensity
             alpha = alpha[:, :, None]
             return (
@@ -463,7 +503,11 @@ class VideoInterface:
         if self.engine is not None:
             frame_id, frame = self.engine.get_latest_frame_with_id()
             if frame is not None and frame_id != self._last_frame_id:
-                processed = self._apply_effect(frame)
+                try:
+                    processed = self._apply_effect(frame)
+                except (RuntimeError, ValueError, cv2.error) as error:
+                    self._report_effect_error(str(error))
+                    processed = frame
                 if self.mirror_enabled.get():
                     processed = cv2.flip(processed, 1)
                 self.current_frame = processed

@@ -24,6 +24,7 @@ class VideoEngineThreaded:
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not self.cap.isOpened():
+            self.cap.release()
             raise ValueError("[ERROR] No se pudo acceder a la webcam.")
 
         # Buffer circular FIFO para almacenar fotogramas

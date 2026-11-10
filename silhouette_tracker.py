@@ -1,4 +1,5 @@
-import os
+from pathlib import Path
+
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -7,22 +8,23 @@ from mediapipe.tasks.python import vision
 
 
 class SilhouetteTracker:
-    def __init__(self, model_path="selfie_segmenter.tflite", confidence=0.5):
+    def __init__(self, model_path=None, confidence=0.5):
         """
         Segmentación semántica de silueta humana basada en MediaPipe Tasks (v1.x+).
         Detecta la silueta estática o en movimiento sin foto previa de fondo.
         """
         self.confidence = confidence
-        
-        # Comprobar si el archivo del modelo existe
-        if not os.path.exists(model_path):
+
+        if model_path is None:
+            model_path = Path(__file__).resolve().with_name("selfie_segmenter.tflite")
+        model_path = Path(model_path)
+        if not model_path.is_file():
             raise FileNotFoundError(
-                f"No se encontró el archivo del modelo en '{model_path}'. "
-                "Descárgalo usando el comando curl facilitado."
+                f"No se encontró el archivo del modelo en '{model_path}'."
             )
 
         # Configuración del detector con la API moderna de MediaPipe
-        base_options = python.BaseOptions(model_asset_path=model_path)
+        base_options = python.BaseOptions(model_asset_path=str(model_path))
         options = vision.ImageSegmenterOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.IMAGE,
