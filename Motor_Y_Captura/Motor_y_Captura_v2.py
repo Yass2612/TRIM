@@ -33,12 +33,14 @@ class VideoEngineThreaded:
         self.lock = threading.Lock()
         self.running = False
         self.current_frame = None
+        self.frame_id = 0
         
         # Lectura inicial del primer frame
         ret, frame = self.cap.read()
         if ret:
             self.current_frame = frame
             self.buffer.append(frame.copy())
+            self.frame_id += 1
 
     def start(self):
         """Inicia el hilo secundario de captura continua."""
@@ -59,6 +61,7 @@ class VideoEngineThreaded:
             with self.lock:
                 self.current_frame = frame
                 self.buffer.append(frame.copy())
+                self.frame_id += 1
 
             # Pequeña pausa para no saturar 100% el hilo del procesador
             time.sleep(0.005)
@@ -67,6 +70,12 @@ class VideoEngineThreaded:
         """Devuelve el frame actual limpio (para mostrar en la GUI del Miembro 3)."""
         with self.lock:
             return self.current_frame.copy() if self.current_frame is not None else None
+
+    def get_latest_frame_with_id(self):
+        """Devuelve el identificador y una copia del frame actual."""
+        with self.lock:
+            frame = self.current_frame.copy() if self.current_frame is not None else None
+            return self.frame_id, frame
 
     def get_buffer_as_array(self):
         """
