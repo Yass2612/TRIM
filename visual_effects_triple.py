@@ -21,7 +21,7 @@ class SilhouetteTripleEffect:
 
     def __init__(
         self,
-        offset_x=255,
+        offset_x=150,
         offset_y=0,
         decay=0.75,
         color_left=(255, 255, 0),    # Cian en BGR
@@ -136,12 +136,14 @@ class SilhouetteTripleEffect:
 
 
 def run_effect(engine):
-    effect = SilhouetteTripleEffect(offset_x=55, decay=0.70)
+    effect = SilhouetteTripleEffect(offset_x=150, decay=0.70)
     last_processed_frame = None
     processed = None
 
     cv2.namedWindow("Captura Original", cv2.WINDOW_NORMAL)
     cv2.namedWindow("Silueta Triplicada", cv2.WINDOW_NORMAL)
+
+    print("[INFO] Controles: '+' alejar siluetas | '-' acercar siluetas | 'r' reiniciar | 'q' salir")
 
     try:
         while True:
@@ -163,6 +165,12 @@ def run_effect(engine):
                 effect.reset()
                 last_processed_frame = None
                 processed = None
+            if key in (ord("+"), ord("=")):
+                effect.offset_x = min(300, effect.offset_x + 15)
+                print(f"[INFO] Separación (offset_x): {effect.offset_x} px")
+            if key == ord("-"):
+                effect.offset_x = max(0, effect.offset_x - 15)
+                print(f"[INFO] Separación (offset_x): {effect.offset_x} px")
     finally:
         cv2.destroyAllWindows()
 

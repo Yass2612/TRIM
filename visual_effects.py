@@ -5,51 +5,75 @@ import numpy as np
 from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
 from silhouette_tracker import SilhouetteTracker
 
+
 class SilhouetteTrailEffect:
     def __init__(self, trail_length=12, decay=0.78):
         """
-        Aplica el efecto de estela de color basado en las máscaras extraídas por el tracker.
+        Efecto sombra a contraluz con estela fantasmal en los bordes,
+        manteniendo intacto el fondo real de la cámara.
         """
         self.trail_length = trail_length
         self.decay = decay
         self.masks = deque(maxlen=trail_length)
-        
-        # Instanciamos el tracker de silueta
+        self.outlines = deque(maxlen=trail_length)
         self.tracker = SilhouetteTracker()
 
     def reset(self):
         """Reinicia el tracker y limpia el historial de estelas."""
         self.tracker.reset()
         self.masks.clear()
+        self.outlines.clear()
 
     def apply(self, frame):
         """
-        Aplica el efecto estela recibiendo el frame completo.
-        :return: Imagen procesada RGBA con color y canal alfa.
+        Aplica la sombra oscura en la silueta actual y una estela luminosa
+        translúcida en los bordes de los fotogramas anteriores.
+        :return: Imagen procesada BGRA uint8 del mismo tamaño que el frame.
         """
-        # 1. Obtenemos la máscara de la silueta actual desde el tracker
+        # 1. Máscara suavizada de la silueta actual (0.0 a 1.0)
         foreground = self.tracker.process_frame(frame)
-        self.masks.append(foreground)
-
-        # 2. Acumulación y decaimiento del rastro (estela)
-        trail_alpha = np.zeros(foreground.shape, dtype=np.float32)
-        for age, mask in enumerate(reversed(self.masks)):
-            weighted_mask = mask.astype(np.float32) * (
-                self.decay**age / 255.0
-            )
-            np.maximum(trail_alpha, weighted_mask, out=trail_alpha)
-
-        # 3. Composición de color de la estela y la silueta en vivo
         current_alpha = foreground.astype(np.float32) / 255.0
-        trail_color = np.array((255, 170, 35), dtype=np.float32)  # Color anaranjado/dorado
-        
-        color = trail_alpha[..., None] * trail_color
-        color = color * (1.0 - current_alpha[..., None]) + (
-            255.0 * current_alpha[..., None]
+
+        # 2. Extraer el borde fino de la silueta actual para la estela etérea
+        grad = cv2.morphologyEx(
+            foreground, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)
+        )
+        grad = cv2.GaussianBlur(grad, (5, 5), 0).astype(np.float32) / 255.0
+
+        self.masks.append(current_alpha)
+        self.outlines.append(grad)
+
+        # 3. Acumular rastro suave de sombra y estela de contorno con decaimiento
+        ghost_shadow = np.zeros_like(current_alpha)
+        ghost_outline = np.zeros_like(current_alpha)
+
+        for age, (m, o) in enumerate(
+            zip(reversed(self.masks), reversed(self.outlines))
+        ):
+            if age == 0:
+                continue  # El frame actual va por separado como sombra principal
+            weight = self.decay**age
+            np.maximum(ghost_shadow, m * weight * 0.35, out=ghost_shadow)
+            np.maximum(ghost_outline, o * weight * 0.75, out=ghost_outline)
+
+        # 4. Composición sobre el fondo real:
+        #    - Sombra muy oscura en la silueta actual (92 % negro) + rastro tenue
+        darkness = np.clip(np.maximum(current_alpha * 0.92, ghost_shadow), 0.0, 1.0)
+        result = frame.astype(np.float32) * (1.0 - darkness[..., None])
+
+        #    - Añadir el halo/estela blanquecina translúcida de los movimientos previos
+        ghost_tint = np.array([225.0, 230.0, 235.0], dtype=np.float32)
+        result = result * (1.0 - ghost_outline[..., None] * 0.55) + (
+            ghost_tint * (ghost_outline[..., None] * 0.55)
         )
 
-        alpha = (trail_alpha * 255).astype(np.uint8)
-        return np.dstack((color.astype(np.uint8), alpha))
+        output_bgr = np.clip(result, 0, 255).astype(np.uint8)
+
+        # 5. Canal alfa (dónde actúa el efecto) para el deslizador de interfaz_prueba.py
+        effect_mask = np.clip(np.maximum(darkness, ghost_outline), 0.0, 1.0)
+        alpha = (effect_mask * 255).astype(np.uint8)
+
+        return np.dstack((output_bgr, alpha))
 
 
 def run_effect(engine):
