@@ -16,6 +16,8 @@ from Motor_Y_Captura.Motor_y_Captura_v2 import VideoEngineThreaded
 if TYPE_CHECKING:
     from Efecto_Neon import SilhouetteNeonEffect
     from visual_effects import SilhouetteTrailEffect
+    from visual_effects_inversion_silueta import SilhouetteInvertBodyEffect
+    from visual_effects_triple import SilhouetteTripleEffect
 
 
 class VideoInterface:
@@ -24,11 +26,13 @@ class VideoInterface:
     MUTED = "#929bad"
     ACCENT = "#7c6cff"
 
+    EFFECT_OPTIONS = ("Original", "Estela", "Neón", "Triplicada", "Inversión")
+
     def __init__(self, root):
         self.root = root
         self.root.title("Procesamiento de vídeo | Interfaz de prueba")
-        self.root.geometry("1180x780")
-        self.root.minsize(1000, 700)
+        self.root.geometry("1180x860")
+        self.root.minsize(1000, 820)
         self.root.configure(bg=self.BACKGROUND)
 
         self.engine = None
@@ -36,16 +40,25 @@ class VideoInterface:
         self.current_frame = None
         self.video_writer = None
         self._last_frame_id = None
+
         self.selected_effect = tk.StringVar(value="Original")
         self.selected_camera = tk.StringVar(value="0")
         self.mirror_enabled = tk.BooleanVar(value=False)
+        self.invert_mode = tk.StringVar(value="body")
+        self.triple_offset = tk.IntVar(value=150)
+
         self.camera_status = tk.StringVar(value="Conectando con la cámara...")
         self.fps_text = tk.StringVar(value="-- FPS · -- × --")
-        self.intensity_text = tk.StringVar(value="50 %")
+        self.intensity_text = tk.StringVar(value="100 %")
+        self.offset_text = tk.StringVar(value="150 px")
         self.recording_status = tk.StringVar(value="Grabación detenida")
         self.performance_text = tk.StringVar(value="Buffer: --/30")
+
         self.trail_effect: SilhouetteTrailEffect | None = None
         self.neon_effect: SilhouetteNeonEffect | None = None
+        self.triple_effect: SilhouetteTripleEffect | None = None
+        self.invert_effect: SilhouetteInvertBodyEffect | None = None
+
         self._fps_frames = 0
         self._fps_started = 0.0
         self._display_fps = 0.0
@@ -68,7 +81,7 @@ class VideoInterface:
 
     def _build_layout(self):
         header = tk.Frame(self.root, bg=self.BACKGROUND)
-        header.pack(fill="x", padx=28, pady=(22, 16))
+        header.pack(fill="x", padx=28, pady=(20, 14))
 
         tk.Label(
             header,
@@ -86,14 +99,14 @@ class VideoInterface:
         ).pack(anchor="w", pady=(3, 0))
         tk.Label(
             header,
-            text="Fase 2 · Interfaz e integración",
+            text="Fase 2 · Interfaz e integración completa",
             bg=self.BACKGROUND,
             fg=self.MUTED,
             font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(3, 0))
 
         content = tk.Frame(self.root, bg=self.BACKGROUND)
-        content.pack(fill="both", expand=True, padx=28, pady=(0, 24))
+        content.pack(fill="both", expand=True, padx=28, pady=(0, 22))
         content.columnconfigure(0, weight=1)
         content.rowconfigure(0, weight=1)
 
@@ -145,7 +158,7 @@ class VideoInterface:
             anchor="w",
         ).pack(side="left", fill="x", expand=True)
 
-        controls = tk.Frame(content, bg=self.PANEL, width=280, padx=18, pady=18)
+        controls = tk.Frame(content, bg=self.PANEL, width=290, padx=18, pady=16)
         controls.grid(row=0, column=1, sticky="nsew")
         controls.grid_propagate(False)
 
@@ -158,11 +171,11 @@ class VideoInterface:
         ).pack(anchor="w")
         tk.Label(
             controls,
-            text="Selecciona un modo de prueba",
+            text="Selecciona un efecto visual",
             bg=self.PANEL,
             fg=self.MUTED,
             font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(4, 14))
+        ).pack(anchor="w", pady=(2, 10))
 
         tk.Label(
             controls,
@@ -170,17 +183,17 @@ class VideoInterface:
             bg=self.PANEL,
             fg="#f4f5fa",
             font=("Segoe UI", 9, "bold"),
-        ).pack(anchor="w", pady=(0, 5))
+        ).pack(anchor="w", pady=(0, 4))
         self.camera_selector = ttk.Combobox(
             controls,
             textvariable=self.selected_camera,
             values=tuple(str(index) for index in range(6)),
             state="readonly",
         )
-        self.camera_selector.pack(fill="x", pady=(0, 12))
+        self.camera_selector.pack(fill="x", pady=(0, 10))
         self.camera_selector.bind("<<ComboboxSelected>>", self._change_camera)
 
-        for effect in ("Original", "Estela", "Neón"):
+        for effect in self.EFFECT_OPTIONS:
             tk.Radiobutton(
                 controls,
                 text=effect,
@@ -190,7 +203,7 @@ class VideoInterface:
                 indicatoron=False,
                 anchor="w",
                 padx=12,
-                pady=9,
+                pady=7,
                 bg="#222837",
                 fg="#e5e8f0",
                 selectcolor=self.ACCENT,
@@ -199,7 +212,7 @@ class VideoInterface:
                 font=("Segoe UI", 10),
                 relief="flat",
                 cursor="hand2",
-            ).pack(fill="x", pady=3)
+            ).pack(fill="x", pady=2)
 
         tk.Label(
             controls,
@@ -207,8 +220,8 @@ class VideoInterface:
             bg=self.PANEL,
             fg="#f4f5fa",
             font=("Segoe UI", 9, "bold"),
-        ).pack(anchor="w", pady=(22, 5))
-        self.intensity = tk.DoubleVar(value=50)
+        ).pack(anchor="w", pady=(14, 4))
+        self.intensity = tk.DoubleVar(value=100)
         self.intensity_scale = ttk.Scale(
             controls,
             from_=0,
@@ -225,7 +238,68 @@ class VideoInterface:
             bg=self.PANEL,
             fg="#bcb4ff",
             font=("Segoe UI", 8, "bold"),
-        ).pack(anchor="e", pady=(3, 0))
+        ).pack(anchor="e", pady=(2, 0))
+
+        # Contenedor dinámico para opciones propias de "Triplicada" o "Inversión"
+        self.extra_options_frame = tk.Frame(controls, bg=self.PANEL)
+        self.extra_options_frame.pack(fill="x", pady=(6, 0))
+
+        # Sub-panel: Separación para Silueta Triplicada
+        self.triple_frame = tk.Frame(self.extra_options_frame, bg=self.PANEL)
+        tk.Label(
+            self.triple_frame,
+            text="SEPARACIÓN CLONES",
+            bg=self.PANEL,
+            fg="#f4f5fa",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", pady=(2, 4))
+        self.offset_scale = ttk.Scale(
+            self.triple_frame,
+            from_=0,
+            to=300,
+            variable=self.triple_offset,
+            style="Test.Horizontal.TScale",
+            command=self._update_triple_offset,
+        )
+        self.offset_scale.pack(fill="x")
+        tk.Label(
+            self.triple_frame,
+            textvariable=self.offset_text,
+            bg=self.PANEL,
+            fg="#bcb4ff",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="e", pady=(2, 0))
+
+        # Sub-panel: Modo para Inversión Espacial
+        self.invert_frame = tk.Frame(self.extra_options_frame, bg=self.PANEL)
+        tk.Label(
+            self.invert_frame,
+            text="ZONA INVERTIDA",
+            bg=self.PANEL,
+            fg="#f4f5fa",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", pady=(2, 4))
+        invert_buttons = tk.Frame(self.invert_frame, bg=self.PANEL)
+        invert_buttons.pack(fill="x")
+        for label, mode_val in (("Cuerpo", "body"), ("Fondo", "background")):
+            tk.Radiobutton(
+                invert_buttons,
+                text=label,
+                value=mode_val,
+                variable=self.invert_mode,
+                command=self._update_invert_mode,
+                indicatoron=False,
+                padx=8,
+                pady=5,
+                bg="#222837",
+                fg="#e5e8f0",
+                selectcolor="#4f46e5",
+                activebackground="#30374a",
+                activeforeground="white",
+                font=("Segoe UI", 9),
+                relief="flat",
+                cursor="hand2",
+            ).pack(side="left", expand=True, fill="x", padx=2)
 
         tk.Checkbutton(
             controls,
@@ -237,7 +311,7 @@ class VideoInterface:
             activeforeground="white",
             selectcolor="#303747",
             font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(12, 0))
+        ).pack(anchor="w", pady=(10, 0))
 
         self.effect_note = tk.Label(
             controls,
@@ -245,10 +319,10 @@ class VideoInterface:
             bg=self.PANEL,
             fg="#bcb4ff",
             font=("Segoe UI", 9),
-            wraplength=235,
+            wraplength=245,
             justify="left",
         )
-        self.effect_note.pack(anchor="w", pady=(12, 8))
+        self.effect_note.pack(anchor="w", pady=(8, 6))
 
         tk.Label(
             controls,
@@ -257,7 +331,7 @@ class VideoInterface:
             fg=self.MUTED,
             font=("Segoe UI", 8),
             anchor="w",
-        ).pack(fill="x", pady=(0, 6))
+        ).pack(fill="x", pady=(0, 4))
 
         tk.Label(
             controls,
@@ -266,7 +340,7 @@ class VideoInterface:
             fg="#ee6b72",
             font=("Segoe UI", 8, "bold"),
             anchor="w",
-        ).pack(fill="x", pady=(0, 7))
+        ).pack(fill="x", pady=(0, 6))
 
         self.capture_button = tk.Button(
             controls,
@@ -279,10 +353,10 @@ class VideoInterface:
             relief="flat",
             font=("Segoe UI", 9, "bold"),
             padx=10,
-            pady=8,
+            pady=7,
             cursor="hand2",
         )
-        self.capture_button.pack(fill="x", side="bottom", pady=(6, 0))
+        self.capture_button.pack(fill="x", side="bottom", pady=(5, 0))
 
         self.record_button = tk.Button(
             controls,
@@ -295,10 +369,10 @@ class VideoInterface:
             relief="flat",
             font=("Segoe UI", 9, "bold"),
             padx=10,
-            pady=8,
+            pady=7,
             cursor="hand2",
         )
-        self.record_button.pack(fill="x", side="bottom", pady=(0, 6))
+        self.record_button.pack(fill="x", side="bottom", pady=(0, 5))
 
         self.camera_button = tk.Button(
             controls,
@@ -311,10 +385,20 @@ class VideoInterface:
             relief="flat",
             font=("Segoe UI", 10, "bold"),
             padx=12,
-            pady=10,
+            pady=9,
             cursor="hand2",
         )
         self.camera_button.pack(fill="x", side="bottom")
+
+    def _reset_all_effects(self):
+        for eff in (
+            self.trail_effect,
+            self.neon_effect,
+            self.triple_effect,
+            self.invert_effect,
+        ):
+            if eff is not None:
+                eff.reset()
 
     def _start_camera(self):
         try:
@@ -336,8 +420,7 @@ class VideoInterface:
         self.camera_button.configure(text="Detener cámara")
         self._last_frame_id = None
         self.current_frame = None
-        if self.trail_effect is not None:
-            self.trail_effect.reset()
+        self._reset_all_effects()
         self._fps_frames = 0
         self._fps_started = 0.0
 
@@ -368,14 +451,14 @@ class VideoInterface:
 
     def _select_effect(self):
         effect = self.selected_effect.get()
-        if effect in ("Estela", "Neón"):
+        if effect != "Original":
             try:
                 self._get_selected_effect()
             except ImportError as error:
                 self._report_effect_error(
-                    "No se pudo importar MediaPipe. Instálalo en el entorno de "
-                    f"Python de la interfaz con:\n\"{sys.executable}\" -m pip "
-                    f"install mediapipe\n\nDetalle: {error}"
+                    "No se pudo importar MediaPipe u otro módulo necesario. "
+                    f"Instálalo en el entorno de Python con:\n\"{sys.executable}\" "
+                    f"-m pip install mediapipe\n\nDetalle: {error}"
                 )
                 return
             except FileNotFoundError as error:
@@ -385,19 +468,28 @@ class VideoInterface:
                 self._report_effect_error(str(error))
                 return
 
-        if self.trail_effect is not None:
-            self.trail_effect.reset()
-        if self.neon_effect is not None:
-            self.neon_effect.reset()
+        self._reset_all_effects()
+
+        # Mostrar/ocultar controles específicos según el efecto activo
+        self.triple_frame.pack_forget()
+        self.invert_frame.pack_forget()
+
         self.intensity_scale.configure(
             state="disabled" if effect == "Original" else "normal"
         )
+
         if effect == "Original":
             self.effect_note.configure(text="Modo original · señal sin filtros")
         elif effect == "Estela":
             self.effect_note.configure(text="Silueta con estela · intensidad ajustable")
-        else:
+        elif effect == "Neón":
             self.effect_note.configure(text="Contorno neón · intensidad ajustable")
+        elif effect == "Triplicada":
+            self.triple_frame.pack(fill="x")
+            self.effect_note.configure(text="Silueta triplicada · cian, centro y magenta")
+        elif effect == "Inversión":
+            self.invert_frame.pack(fill="x")
+            self.effect_note.configure(text="Inversión de color · cuerpo o fondo")
 
     def _get_trail_effect(self) -> SilhouetteTrailEffect:
         if self.trail_effect is None:
@@ -413,14 +505,39 @@ class VideoInterface:
             self.neon_effect = SilhouetteNeonEffect()
         return self.neon_effect
 
+    def _get_triple_effect(self) -> SilhouetteTripleEffect:
+        if self.triple_effect is None:
+            from visual_effects_triple import SilhouetteTripleEffect
+
+            self.triple_effect = SilhouetteTripleEffect(
+                offset_x=self.triple_offset.get(), decay=0.70
+            )
+        return self.triple_effect
+
+    def _get_invert_effect(self) -> SilhouetteInvertBodyEffect:
+        if self.invert_effect is None:
+            from visual_effects_inversion_silueta import SilhouetteInvertBodyEffect
+
+            self.invert_effect = SilhouetteInvertBodyEffect(
+                mode=self.invert_mode.get(), line_thickness=2
+            )
+        return self.invert_effect
+
     def _get_selected_effect(self):
-        if self.selected_effect.get() == "Estela":
+        effect = self.selected_effect.get()
+        if effect == "Estela":
             return self._get_trail_effect()
-        return self._get_neon_effect()
+        if effect == "Neón":
+            return self._get_neon_effect()
+        if effect == "Triplicada":
+            return self._get_triple_effect()
+        return self._get_invert_effect()
 
     def _report_effect_error(self, detail):
         self.selected_effect.set("Original")
         self.intensity_scale.configure(state="disabled")
+        self.triple_frame.pack_forget()
+        self.invert_frame.pack_forget()
         self.effect_note.configure(text="Efecto no disponible")
         messagebox.showerror(
             "No se pudo cargar el efecto",
@@ -430,21 +547,29 @@ class VideoInterface:
     def _update_intensity_label(self, value):
         self.intensity_text.set(f"{float(value):.0f} %")
 
+    def _update_triple_offset(self, value):
+        offset = int(float(value))
+        self.offset_text.set(f"{offset} px")
+        if self.triple_effect is not None:
+            self.triple_effect.offset_x = offset
+
+    def _update_invert_mode(self):
+        if self.invert_effect is not None:
+            self.invert_effect.mode = self.invert_mode.get()
+
     def _apply_effect(self, frame):
         effect = self.selected_effect.get()
         intensity = self.intensity.get() / 100.0
         if effect == "Original" or intensity == 0:
             return frame
 
-        if effect in ("Estela", "Neón"):
-            overlay = self._get_selected_effect().apply(frame)
-            alpha = (overlay[:, :, 3].astype("float32") / 255.0) * intensity
-            alpha = alpha[:, :, None]
-            return (
-                frame.astype("float32") * (1.0 - alpha)
-                + overlay[:, :, :3].astype("float32") * alpha
-            ).clip(0, 255).astype("uint8")
-        return frame
+        overlay = self._get_selected_effect().apply(frame)
+        alpha = (overlay[:, :, 3].astype("float32") / 255.0) * intensity
+        alpha = alpha[:, :, None]
+        return (
+            frame.astype("float32") * (1.0 - alpha)
+            + overlay[:, :, :3].astype("float32") * alpha
+        ).clip(0, 255).astype("uint8")
 
     def _save_snapshot(self):
         if self.current_frame is None:
