@@ -15,7 +15,7 @@ class SilhouetteStrobeFreezeEffect:
 
     def __init__(
         self,
-        capture_interval=10,
+        capture_interval=24,       # <-- Aumentado de 10 a 24 para mayor separación
         max_echoes=5,
         echo_opacity=0.65,
         tint_bgr=(255, 200, 80),
